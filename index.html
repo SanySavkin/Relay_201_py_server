@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Керування реллє (Хмарний режим)</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 340px; }
+        .device-status { font-size: 14px; font-weight: bold; margin-bottom: 20px; padding: 8px; border-radius: 6px; transition: all 0.3s; }
+        .status-online { background-color: #e8f8f5; color: #2ecc71; border: 1px solid #2ecc71; }
+        .status-offline { background-color: #fdedec; color: #e74c3c; border: 1px solid #e74c3c; }
+        .relay-block { margin-bottom: 25px; padding: 15px; border: 1px solid #eef2f5; border-radius: 8px; background-color: #fafbfc; position: relative; }
+        .relay-title { font-weight: bold; margin-bottom: 10px; font-size: 18px; }
+        .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; }
+        .indicator.active { background-color: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
+        .btn { border: none; padding: 12px 20px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; margin: 0 5px; color: white; transition: background 0.2s; }
+        .btn-on { background-color: #2ecc71; }
+        .btn-on:hover { background-color: #27ae60; }
+        .btn-off { background-color: #e74c3c; }
+        .btn-off:hover { background-color: #c0392b; }
+        .btn:disabled { background-color: #e2e8f0; color: #a0aec0; cursor: not-allowed; }
+        .status-text { font-size: 12px; color: #7f8c8d; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>НРК "ЗМІЙ"</h1>
+        <div id="dev-status-block" class="device-status status-offline">Модуль: ОФФЛАЙН</div>
+        
+        <div class="relay-block" id="block-1">
+            <div class="relay-title">Реле 1</div>
+            <div class="indicator" id="ind-1"></div>
+            <button class="btn btn-on" id="btn-on-1" onclick="sendCmd('11')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-1" onclick="sendCmd('21')">ВЫКЛ</button>
+        </div>
+        
+        <div class="relay-block" id="block-2">
+            <div class="relay-title">Реле 2</div>
+            <div class="indicator" id="ind-2"></div>
+            <button class="btn btn-on" id="btn-on-2" onclick="sendCmd('12')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-2" onclick="sendCmd('22')">ВЫКЛ</button>
+        </div>
+        <div class="status-text" id="sync-time">Синхронізація...</div>
+    </div>
+
+    <script>
+        // timestamp последнего клика, чтобы знать когда очищать буфер оптимизма
+        let lastClickTime = 0;
+        let pendingCommands = { "1": null, "2": null };
+
+        function sendCmd(code) {
+            const action = code.charAt(0); 
+            const relay = code.charAt(1);  
+            const targetState = action === '1' ? '1' : '0';
+
+            lastClickTime = Date.now();
+            pendingCommands[relay] = targetState;
+            
+            if (action === '1') {
+                const oppositeRelay = relay === '1' ? '2' : '1';
+                pendingCommands[oppositeRelay] = '0';
+            }
+            renderButtons();
+
+            fetch('/cmd?code=' + code)
+                .then(res => {
+                    if (!res.ok) {
+                        console.warn('Команда отклонена сервером');
+                        pendingCommands[relay] = null;
+                        updateUI();
+                    }
+                })
+                .catch(err => {
+                    console.error('Помилка мережі:', err);
+                    pendingCommands[relay] = null;
+                    updateUI();
+                });
+        }
+
+        function renderButtons(serverData = null) {
+            const statusBlock = document.getElementById('dev-status-block');
+            const online = serverData ? serverData.online : true;
+
+            if (online) {
+                if (serverData) {
+                    statusBlock.innerText = "Статус: ОНЛАЙН";
+                    statusBlock.className = "device-status status-online";
+                }
+
+                // Если с момента клика прошло более 3 секунд, принудительно верим бэкенду, а не оптимистичному буферу
+                if (serverData && (Date.now() - lastClickTime > 3000)) {
+                    pendingCommands["1"] = null;
+                    pendingCommands["2"] = null;
+                }
+
+                const state1 = pendingCommands["1"] !== null ? pendingCommands["1"] : (serverData ? serverData["1"] : "0");
+                const state2 = pendingCommands["2"] !== null ? pendingCommands["2"] : (serverData ? serverData["2"] : "0");
+
+                if (serverData && serverData["1"] === pendingCommands["1"]) pendingCommands["1"] = null;
+                if (serverData && serverData["2"] === pendingCommands["2"]) pendingCommands["2"] = null;
+
+                document.getElementById('btn-on-1').disabled = (state1 === "1" || state2 === "1");
+                document.getElementById('id-off-1').disabled = (state1 === "0");
+                
+                document.getElementById('btn-on-2').disabled = (state2 === "1" || state1 === "1");
+                document.getElementById('id-off-2').disabled = (state2 === "0");
+
+                const ind1 = document.getElementById('ind-1');
+                if (state1 === "1") ind1.classList.add('active'); else ind1.classList.remove('active');
+
+                const ind2 = document.getElementById('ind-2');
+                if (state2 === "1") ind2.classList.add('active'); else ind2.classList.remove('active');
+            } else {
+                statusBlock.innerText = "Статус: ОФФЛАЙН";
+                statusBlock.className = "device-status status-offline";
+                document.getElementById('btn-on-1').disabled = true;
+                document.getElementById('id-off-1').disabled = true;
+                document.getElementById('btn-on-2').disabled = true;
+                document.getElementById('id-off-2').disabled = true;
+            }
+        }
+
+        function updateUI() {
+            fetch('/status-data')
+                .then(res => res.json())
+                .then(data => {
+                    renderButtons(data);
+                    document.getElementById('sync-time').innerText = "Зв'язок з сервером: ОК";
+                })
+                .catch(err => {
+                    document.getElementById('sync-time').innerText = "Помилка зв'язку з сервером";
+                });
+        }
+
+        setInterval(updateUI, 500);
+        updateUI();
+    </script>
+</body>
+</html>
