@@ -3,9 +3,9 @@ import socketserver
 import json
 import time
 import logging
+import sys
 from urllib.parse import urlparse, parse_qs
 
-# === НАСТРОЙКИ ===
 # Настройка логирования для systemd
 logging.basicConfig(
     level=logging.INFO,
@@ -15,6 +15,7 @@ logging.basicConfig(
     ]
 )
 
+# === НАСТРОЙКИ ===
 WEB_PORT = 80  
 
 # Глобальные переменные
@@ -32,7 +33,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Управление реле (Облачный режим)</title>
+    <title>Керування реллє (Хмарний режим)</title>
     <style>
         body { font-family: sans-serif; background-color: #f4f7f6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 340px; }
@@ -57,7 +58,7 @@ HTML_PAGE = """<!DOCTYPE html>
 </head>
 <body>
     <div class="container">
-        <h1>Облачное Реле (POST)</h1>
+        <h1>НРК "ЗМІЙ"</h1>
         
         <!-- Блок общего статуса модуля -->
         <div id="dev-status-block" class="device-status status-offline">Модуль: ОФФЛАЙН</div>
@@ -65,24 +66,24 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="relay-block" id="block-1">
             <div class="relay-title">Реле 1</div>
             <div class="indicator" id="ind-1"></div>
-            <button class="btn btn-on" id="btn-on-1" onclick="sendCmd('11:2')">ВКЛ</button>
-            <button class="btn btn-off" id="id-off-1" onclick="sendCmd('21:2')">ВЫКЛ</button>
+            <button class="btn btn-on" id="btn-on-1" onclick="sendCmd('11')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-1" onclick="sendCmd('21')">ВЫКЛ</button>
         </div>
         
         <div class="relay-block" id="block-2">
             <div class="relay-title">Реле 2</div>
             <div class="indicator" id="ind-2"></div>
-            <button class="btn btn-on" id="btn-on-2" onclick="sendCmd('12:2')">ВКЛ</button>
-            <button class="btn btn-off" id="id-off-2" onclick="sendCmd('22:2')">ВЫКЛ</button>
+            <button class="btn btn-on" id="btn-on-2" onclick="sendCmd('12')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-2" onclick="sendCmd('22')">ВЫКЛ</button>
         </div>
         
-        <div class="status-text" id="sync-time">Синхронизация...</div>
+        <div class="status-text" id="sync-time">Синхронізація...</div>
     </div>
 
     <script>
         function sendCmd(code) {
             fetch('/cmd?code=' + code)
-                .catch(err => console.error('Ошибка сети:', err));
+                .catch(err => console.error('Помилка мережі:', err));
         }
 
         function updateUI() {
@@ -119,15 +120,15 @@ HTML_PAGE = """<!DOCTYPE html>
                     const ind2 = document.getElementById('ind-2');
                     if (data["2"] === "1") ind2.classList.add('active'); else ind2.classList.remove('active');
 
-                    document.getElementById('sync-time').innerText = 'Связь с сервером активна.';
+                    document.getElementById('sync-time').innerText = "Зв'язок з сервером: ОК";
                 })
                 .catch(err => {
-                    document.getElementById('sync-time').innerText = 'Ошибка связи с сервером';
+                    document.getElementById('sync-time').innerText = "Помилка зв'язку з сервером";
                 });
         }
 
-        // Опрашиваем API сервера раз в секунду
-        setInterval(updateUI, 1000);
+        // Опрашиваем API сервера
+        setInterval(updateUI, 500);
         updateUI();
     </script>
 </body>
@@ -148,8 +149,8 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
         if self.path.startswith('/cmd'):
             query = parse_qs(urlparse(self.path).query)
             code = query.get('code', [None])
-            if code:
-                current_relay_command = f"A{code}"
+            if code and code[0]:
+                current_relay_command = f"A{code[0]}"
                 self.send_response(200)
             else:
                 self.send_response(400)
@@ -160,10 +161,8 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         # API endpoint, отдающий состояние в браузер
         if self.path == '/status-data':
-            # Считаем устройство Онлайн, если от него был запрос в течение последних 5 секунд
-            is_online = (time.time() - last_seen_time) < 5
+            is_online = (time.time() - last_seen_time) < 10
             
-            # Собираем JSON для отправки в UI
             response_data = {
                 "online": is_online,
                 "1": relay_states["1"],
@@ -190,37 +189,38 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
         global current_relay_command, relay_states, last_seen_time
 
         if self.path == '/SyncServiceImpl.svc/ReportStatus':
-            # Фиксируем точное время получения POST-запроса
             last_seen_time = time.time()
             
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length).decode('utf-8')
             raw_body = post_data.strip('"')
-
-            # ЛОГ 1: Логируем факт получения POST-запроса и входящее тело
+            
             logging.info(f"Получен POST-запрос на {self.path} | Тело: {raw_body}")
             
             if len(raw_body) >= 28:
                 state_part = raw_body[-8:]
-                relay_states["1"] = state_part[0]  # Индекс 0 — первое реле
-                relay_states["2"] = state_part[1]  # Индекс 1 — второе реле
+                relay_states["1"] = state_part[0]
+                relay_states["2"] = state_part[1]
 
             response_body = f'"{current_relay_command}"'
             response_bytes = response_body.encode('utf-8')
-
-            # ЛОГ 2: Логируем данные, подготовленные к отправке в ответ
+            
             logging.info(f"Отправка ответа на реле: {response_body}")
             
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response_bytes)))
-            self.end_headers()
-            self.wfile.write(response_bytes)
+            # ФОРМИРУЕМ ОТВЕТ ДЛЯ РЕЛЕ ВРУЧНУЮ С ВЕРСИЕЙ HTTP/1.1
+            # Символы \r\n обязательны по стандарту HTTP протокола
+            raw_response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(response_bytes)}\r\n"
+                "\r\n"
+            ).encode('utf-8') + response_bytes
+
+            self.wfile.write(raw_response)
             
             current_relay_command = "A"
             return
 
-        # Логируем некорректные POST-запросы
         logging.warning(f"Некорректный POST-запрос на путь: {self.path}")
         self.send_response(400)
         self.end_headers()
@@ -230,8 +230,8 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 if __name__ == "__main__":
     with ThreadedHTTPServer(("0.0.0.0", WEB_PORT), CloudRelayHTTPHandler) as httpd:
-        print(f"[УСПЕХ] Сервер со статусом Онлайн/Офлайн запущен на порту {WEB_PORT}!")
+        logging.info(f"Сервер со статусом Онлайн/Офлайн запущен на порту {WEB_PORT}!")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nСервер остановлен.")
+            logging.info("Сервер остановлен.")
