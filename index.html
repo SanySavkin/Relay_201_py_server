@@ -12,8 +12,28 @@
         .status-offline { background-color: #fdedec; color: #e74c3c; border: 1px solid #e74c3c; }
         .relay-block { margin-bottom: 25px; padding: 15px; border: 1px solid #eef2f5; border-radius: 8px; background-color: #fafbfc; position: relative; }
         .relay-title { font-weight: bold; margin-bottom: 10px; font-size: 18px; }
-        .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; }
+        
+        /* Стили индикатора и спиннера */
+        .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; box-sizing: border-radius; }
         .indicator.active { background-color: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
+        
+        /* Класс спиннера загрузки */
+        .indicator.loading { 
+            background-color: transparent !important;
+            box-shadow: none !important;
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #3498db;
+            animation: spin 0.8s linear infinite;
+            border-radius: 50%;
+            width: 14px;
+            height: 14px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
         .btn { border: none; padding: 12px 20px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; margin: 0 5px; color: white; transition: background 0.2s; }
         .btn-on { background-color: #2ecc71; }
         .btn-on:hover { background-color: #27ae60; }
@@ -45,35 +65,36 @@
     </div>
 
     <script>
-        // timestamp последнего клика, чтобы знать когда очищать буфер оптимизма
+        // Состояние ожидания выполнения команды для каждого реле
+        let isWaitingForHardware = { "1": false, "2": false };
+        let lastTargetState = { "1": null, "2": null };
         let lastClickTime = 0;
-        let pendingCommands = { "1": null, "2": null };
 
         function sendCmd(code) {
-            const action = code.charAt(0); 
-            const relay = code.charAt(1);  
-            const targetState = action === '1' ? '1' : '0';
-
-            lastClickTime = Date.now();
-            pendingCommands[relay] = targetState;
+            const action = code.charAt(0); // '1' - вкл, '2' - выкл
+            const relay = code.charAt(1);  // '1' или '2'
             
-            if (action === '1') {
-                const oppositeRelay = relay === '1' ? '2' : '1';
-                pendingCommands[oppositeRelay] = '0';
-            }
+            // Запоминаем, какое состояние мы запросили для этого реле
+            lastTargetState[relay] = action === '1' ? '1' : '0';
+            isWaitingForHardware[relay] = true;
+            lastClickTime = Date.now();
+
+            // Моментально блокируем интерфейс и включаем спиннер
             renderButtons();
 
             fetch('/cmd?code=' + code)
                 .then(res => {
                     if (!res.ok) {
                         console.warn('Команда отклонена сервером');
-                        pendingCommands[relay] = null;
+                        isWaitingForHardware[relay] = false;
+                        lastTargetState[relay] = null;
                         updateUI();
                     }
                 })
                 .catch(err => {
                     console.error('Помилка мережі:', err);
-                    pendingCommands[relay] = null;
+                    isWaitingForHardware[relay] = false;
+                    lastTargetState[relay] = null;
                     updateUI();
                 });
         }
@@ -88,29 +109,53 @@
                     statusBlock.className = "device-status status-online";
                 }
 
-                // Если с момента клика прошло более 3 секунд, принудительно верим бэкенду, а не оптимистичному буферу
-                if (serverData && (Date.now() - lastClickTime > 3000)) {
-                    pendingCommands["1"] = null;
-                    pendingCommands["2"] = null;
+                // Таймаут безопасности: если за 5 секунд железка не ответила, сбрасываем спиннеры
+                if (Date.now() - lastClickTime > 5000) {
+                    isWaitingForHardware["1"] = false;
+                    isWaitingForHardware["2"] = false;
                 }
 
-                const state1 = pendingCommands["1"] !== null ? pendingCommands["1"] : (serverData ? serverData["1"] : "0");
-                const state2 = pendingCommands["2"] !== null ? pendingCommands["2"] : (serverData ? serverData["2"] : "0");
+                // Базовые состояния берем строго из того, что прислал сервер (никакого скрытого оптимизма)
+                const realState1 = serverData ? serverData["1"] : "0";
+                const realState2 = serverData ? serverData["2"] : "0";
 
-                if (serverData && serverData["1"] === pendingCommands["1"]) pendingCommands["1"] = null;
-                if (serverData && serverData["2"] === pendingCommands["2"]) pendingCommands["2"] = null;
+                // Проверяем: совпало ли текущее реальное состояние железа с тем, что мы ждали?
+                if (serverData) {
+                    if (isWaitingForHardware["1"] && realState1 === lastTargetState["1"]) {
+                        isWaitingForHardware["1"] = false;
+                    }
+                    if (isWaitingForHardware["2"] && realState2 === lastTargetState["2"]) {
+                        isWaitingForHardware["2"] = false;
+                    }
+                }
 
-                document.getElementById('btn-on-1').disabled = (state1 === "1" || state2 === "1");
-                document.getElementById('id-off-1').disabled = (state1 === "0");
-                
-                document.getElementById('btn-on-2').disabled = (state2 === "1" || state1 === "1");
-                document.getElementById('id-off-2').disabled = (state2 === "0");
+                // КНОПКИ РЕЛЕ 1: блокируем, если ждем команду ИЛИ если включено любое из реле (интерлок)
+                const lockButtons1 = isWaitingForHardware["1"] || isWaitingForHardware["2"] || realState1 === "1" || realState2 === "1";
+                document.getElementById('btn-on-1').disabled = lockButtons1;
+                document.getElementById('id-off-1').disabled = isWaitingForHardware["1"] || realState1 === "0";
 
+                // КНОПКИ РЕЛЕ 2: аналогично
+                const lockButtons2 = isWaitingForHardware["2"] || isWaitingForHardware["1"] || realState2 === "1" || realState1 === "1";
+                document.getElementById('btn-on-2').disabled = lockButtons2;
+                document.getElementById('id-off-2').disabled = isWaitingForHardware["2"] || realState2 === "0";
+
+                // Отрисовка индикаторов / спиннеров
                 const ind1 = document.getElementById('ind-1');
-                if (state1 === "1") ind1.classList.add('active'); else ind1.classList.remove('active');
+                ind1.className = "indicator"; // сброс классов
+                if (isWaitingForHardware["1"]) {
+                    ind1.classList.add('loading');
+                } else if (realState1 === "1") {
+                    ind1.classList.add('active');
+                }
 
                 const ind2 = document.getElementById('ind-2');
-                if (state2 === "1") ind2.classList.add('active'); else ind2.classList.remove('active');
+                ind2.className = "indicator"; // сброс классов
+                if (isWaitingForHardware["2"]) {
+                    ind2.classList.add('loading');
+                } else if (realState2 === "1") {
+                    ind2.classList.add('active');
+                }
+
             } else {
                 statusBlock.innerText = "Статус: ОФФЛАЙН";
                 statusBlock.className = "device-status status-offline";
