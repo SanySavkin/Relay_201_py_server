@@ -53,10 +53,10 @@
             <div class="relay-title">Реле 1</div>
             <div class="indicator" id="ind-1"></div>
             <div class="time-input-container">
-                <label for="time-1">Время импульса:</label>
+                <label for="time-1">час імпульсу:</label>
                 <select id="time-1" class="time-select">
-                    <option value="0">0 сек (без времени)</option>
-                    <option value="0.5">0.5 сек (*)</option>
+                    <option value="0">-</option>
+                    <option value="0.5">0.5 сек</option>
                     <option value="1">1 сек</option>
                     <option value="2">2 сек</option>
                     <option value="3">3 сек</option>
@@ -72,10 +72,10 @@
             <div class="relay-title">Реле 2</div>
             <div class="indicator" id="ind-2"></div>
             <div class="time-input-container">
-                <label for="time-2">Время импульса:</label>
+                <label for="time-2">час імпульсу:</label>
                 <select id="time-2" class="time-select">
-                    <option value="0">0 сек (без времени)</option>
-                    <option value="0.5">0.5 сек (*)</option>
+                    <option value="0">-</option>
+                    <option value="0.5">0.5 сек</option>
                     <option value="1">1 сек</option>
                     <option value="2">2 сек</option>
                     <option value="3">3 сек</option>
@@ -108,7 +108,6 @@
         let isShortPulse = { "1": false, "2": false };
         let lastClickTime = 0;
 
-        // Строковые константы замаскированы через hex-коды от багов разметки платформы
         const CL_LOADING = "\x6c\x6f\x61\x64\x69\x6e\x67"; // "loading"
         const CL_ACTIVE  = "\x61\x63\x74\x69\x76\x65";   // "active"
         const CL_OFFLINE = "\x73\x74\x61\x74\x75\x73\x2d\x6f\x66\x66\x6c\x69\x6e\x65"; // "status-offline"
@@ -162,11 +161,16 @@
                 });
         }
 
-        function renderButtons(serverData = null) {
+        // Параметр forceOffline принудительно гасит интерфейс при падении сети
+        function renderButtons(serverData = null, forceOffline = false) {
             let online = false;
-            if (serverData) {
+            
+            if (forceOffline) {
+                online = false;
+            } else if (serverData) {
                 online = serverData.online;
             } else {
+                // Если вызвано из sendCmd (клик), проверяем прошлый статус
                 online = !UI.status.classList.contains(CL_OFFLINE);
             }
 
@@ -240,11 +244,12 @@
             fetch('/status-data')
                 .then(res => res.json())
                 .then(data => {
-                    renderButtons(data);
+                    renderButtons(data, false);
                     UI.sync.innerText = "Зв'язок з сервером: ОК";
                 })
                 .catch(err => {
-                    renderButtons(null);
+                    // При ошибке сети принудительно переводим интерфейс в офлайн режим
+                    renderButtons(null, true);
                     UI.sync.innerText = "Помилка зв'язку з сервером";
                 });
         }
