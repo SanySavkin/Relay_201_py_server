@@ -13,11 +13,13 @@
         .relay-block { margin-bottom: 25px; padding: 15px; border: 1px solid #eef2f5; border-radius: 8px; background-color: #fafbfc; position: relative; }
         .relay-title { font-weight: bold; margin-bottom: 10px; font-size: 18px; }
         
-        /* Стили индикатора и спиннера */
-        .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; box-sizing: border-radius; }
+        /* Стили контейнера ввода времени */
+        .time-input-container { margin-bottom: 15px; font-size: 14px; color: #555; display: flex; justify-content: center; align-items: center; gap: 8px; }
+        .time-input { width: 60px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-weight: bold; }
+
+        .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; }
         .indicator.active { background-color: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
         
-        /* Класс спиннера загрузки */
         .indicator.loading { 
             background-color: transparent !important;
             box-shadow: none !important;
@@ -51,38 +53,61 @@
         <div class="relay-block" id="block-1">
             <div class="relay-title">Реле 1</div>
             <div class="indicator" id="ind-1"></div>
-            <button class="btn btn-on" id="btn-on-1" onclick="sendCmd('11')">ВКЛ</button>
-            <button class="btn btn-off" id="id-off-1" onclick="sendCmd('21')">ВЫКЛ</button>
+            <div class="time-input-container">
+                <label for="time-1">Время:</label>
+                <input type="number" id="time-1" class="time-input" value="5" min="1">
+                <span>сек</span>
+            </div>
+            <button class="btn btn-on" id="btn-on-1" onclick="prepareAndSend('11', 'time-1')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-1" onclick="prepareAndSend('21')">ВЫКЛ</button>
         </div>
         
         <div class="relay-block" id="block-2">
             <div class="relay-title">Реле 2</div>
             <div class="indicator" id="ind-2"></div>
-            <button class="btn btn-on" id="btn-on-2" onclick="sendCmd('12')">ВКЛ</button>
-            <button class="btn btn-off" id="id-off-2" onclick="sendCmd('22')">ВЫКЛ</button>
+            <div class="time-input-container">
+                <label for="time-2">Время:</label>
+                <input type="number" id="time-2" class="time-input" value="5" min="1">
+                <span>сек</span>
+            </div>
+            <button class="btn btn-on" id="btn-on-2" onclick="prepareAndSend('12', 'time-2')">ВКЛ</button>
+            <button class="btn btn-off" id="id-off-2" onclick="prepareAndSend('22')">ВЫКЛ</button>
         </div>
         <div class="status-text" id="sync-time">Синхронізація...</div>
     </div>
 
     <script>
-        // Состояние ожидания выполнения команды для каждого реле
         let isWaitingForHardware = { "1": false, "2": false };
         let lastTargetState = { "1": null, "2": null };
         let lastClickTime = 0;
 
+        function prepareAndSend(baseCode, inputId = null) {
+            let fullCode = baseCode;
+            // Если передан ID инпута — значит это команда ВКЛ ('11' или '12'), добавляем к ней время
+            if (inputId) {
+                let timeVal = parseInt(document.getElementById(inputId).value, 10);
+                if (isNaN(timeVal) || timeVal < 1) {
+                    timeVal = 1; // Защита на фронтенде: минимум 1 сек
+                    document.getElementById(inputId).value = 1;
+                }
+                fullCode = baseCode + ":" + timeVal;
+            }
+            sendCmd(fullCode);
+        }
+
         function sendCmd(code) {
-            const action = code.charAt(0); // '1' - вкл, '2' - выкл
-            const relay = code.charAt(1);  // '1' или '2'
+            // Парсим чистую команду (берем часть до двоеточия)
+            const basePart = code.split(":")[0];
+            const action = basePart.charAt(0); // '1' - вкл, '2' - выкл
+            const relay = basePart.charAt(1);  // '1' или '2'
             
-            // Запоминаем, какое состояние мы запросили для этого реле
             lastTargetState[relay] = action === '1' ? '1' : '0';
             isWaitingForHardware[relay] = true;
             lastClickTime = Date.now();
 
-            // Моментально блокируем интерфейс и включаем спиннер
             renderButtons();
 
-            fetch('/cmd?code=' + code)
+            fetch('/cmd?code=' + encodeURIComponent(code))
                 .then(res => {
                     if (!res.ok) {
                         console.warn('Команда отклонена сервером');
@@ -109,60 +134,46 @@
                     statusBlock.className = "device-status status-online";
                 }
 
-                // Таймаут безопасности: если за 5 секунд железка не ответила, сбрасываем спиннеры
                 if (Date.now() - lastClickTime > 5000) {
                     isWaitingForHardware["1"] = false;
                     isWaitingForHardware["2"] = false;
                 }
 
-                // Базовые состояния берем строго из того, что прислал сервер (никакого скрытого оптимизма)
                 const realState1 = serverData ? serverData["1"] : "0";
                 const realState2 = serverData ? serverData["2"] : "0";
 
-                // Проверяем: совпало ли текущее реальное состояние железа с тем, что мы ждали?
                 if (serverData) {
-                    if (isWaitingForHardware["1"] && realState1 === lastTargetState["1"]) {
-                        isWaitingForHardware["1"] = false;
-                    }
-                    if (isWaitingForHardware["2"] && realState2 === lastTargetState["2"]) {
-                        isWaitingForHardware["2"] = false;
-                    }
+                    if (isWaitingForHardware["1"] && realState1 === lastTargetState["1"]) isWaitingForHardware["1"] = false;
+                    if (isWaitingForHardware["2"] && realState2 === lastTargetState["2"]) isWaitingForHardware["2"] = false;
                 }
 
-                // КНОПКИ РЕЛЕ 1: блокируем, если ждем команду ИЛИ если включено любое из реле (интерлок)
                 const lockButtons1 = isWaitingForHardware["1"] || isWaitingForHardware["2"] || realState1 === "1" || realState2 === "1";
                 document.getElementById('btn-on-1').disabled = lockButtons1;
                 document.getElementById('id-off-1').disabled = isWaitingForHardware["1"] || realState1 === "0";
+                document.getElementById('time-1').disabled = lockButtons1;
 
-                // КНОПКИ РЕЛЕ 2: аналогично
                 const lockButtons2 = isWaitingForHardware["2"] || isWaitingForHardware["1"] || realState2 === "1" || realState1 === "1";
                 document.getElementById('btn-on-2').disabled = lockButtons2;
                 document.getElementById('id-off-2').disabled = isWaitingForHardware["2"] || realState2 === "0";
+                document.getElementById('time-2').disabled = lockButtons2;
 
-                // Отрисовка индикаторов / спиннеров
                 const ind1 = document.getElementById('ind-1');
-                ind1.className = "indicator"; // сброс классов
-                if (isWaitingForHardware["1"]) {
-                    ind1.classList.add('loading');
-                } else if (realState1 === "1") {
-                    ind1.classList.add('active');
-                }
+                ind1.className = "indicator"; 
+                if (isWaitingForHardware["1"]) ind1.classList.add('loading'); else if (realState1 === "1") ind1.classList.add('active');
 
                 const ind2 = document.getElementById('ind-2');
-                ind2.className = "indicator"; // сброс классов
-                if (isWaitingForHardware["2"]) {
-                    ind2.classList.add('loading');
-                } else if (realState2 === "1") {
-                    ind2.classList.add('active');
-                }
+                ind2.className = "indicator"; 
+                if (isWaitingForHardware["2"]) ind2.classList.add('loading'); else if (realState2 === "1") ind2.classList.add('active');
 
             } else {
                 statusBlock.innerText = "Статус: ОФФЛАЙН";
                 statusBlock.className = "device-status status-offline";
                 document.getElementById('btn-on-1').disabled = true;
                 document.getElementById('id-off-1').disabled = true;
+                document.getElementById('time-1').disabled = true;
                 document.getElementById('btn-on-2').disabled = true;
                 document.getElementById('id-off-2').disabled = true;
+                document.getElementById('time-2').disabled = true;
             }
         }
 
