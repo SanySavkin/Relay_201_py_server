@@ -13,9 +13,8 @@
         .relay-block { margin-bottom: 25px; padding: 15px; border: 1px solid #eef2f5; border-radius: 8px; background-color: #fafbfc; position: relative; }
         .relay-title { font-weight: bold; margin-bottom: 10px; font-size: 18px; }
         
-        /* Стили контейнера ввода времени */
         .time-input-container { margin-bottom: 15px; font-size: 14px; color: #555; display: flex; justify-content: center; align-items: center; gap: 8px; }
-        .time-input { width: 60px; padding: 6px; border: 1px solid #ccc; border-radius: 4px; text-align: center; font-weight: bold; }
+        .time-select { padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-weight: bold; background: white; cursor: pointer; }
 
         .indicator { width: 20px; height: 20px; border-radius: 50%; display: inline-block; position: absolute; top: 15px; right: 15px; background-color: #bdc3c7; }
         .indicator.active { background-color: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
@@ -54,9 +53,16 @@
             <div class="relay-title">Реле 1</div>
             <div class="indicator" id="ind-1"></div>
             <div class="time-input-container">
-                <label for="time-1">Время:</label>
-                <input type="number" id="time-1" class="time-input" value="5" min="1">
-                <span>сек</span>
+                <label for="time-1">Время импульса:</label>
+                <select id="time-1" class="time-select">
+                    <option value="0">0 сек (без времени)</option>
+                    <option value="0.5">0.5 сек (*)</option>
+                    <option value="1">1 сек</option>
+                    <option value="2">2 сек</option>
+                    <option value="3">3 сек</option>
+                    <option value="5" selected>5 сек</option>
+                    <option value="10">10 сек</option>
+                </select>
             </div>
             <button class="btn btn-on" id="btn-on-1" onclick="prepareAndSend('11', 'time-1')">ВКЛ</button>
             <button class="btn btn-off" id="id-off-1" onclick="prepareAndSend('21')">ВЫКЛ</button>
@@ -66,9 +72,16 @@
             <div class="relay-title">Реле 2</div>
             <div class="indicator" id="ind-2"></div>
             <div class="time-input-container">
-                <label for="time-2">Время:</label>
-                <input type="number" id="time-2" class="time-input" value="5" min="1">
-                <span>сек</span>
+                <label for="time-2">Время импульса:</label>
+                <select id="time-2" class="time-select">
+                    <option value="0">0 сек (без времени)</option>
+                    <option value="0.5">0.5 сек (*)</option>
+                    <option value="1">1 сек</option>
+                    <option value="2">2 сек</option>
+                    <option value="3">3 сек</option>
+                    <option value="5" selected>5 сек</option>
+                    <option value="10">10 сек</option>
+                </select>
             </div>
             <button class="btn btn-on" id="btn-on-2" onclick="prepareAndSend('12', 'time-2')">ВКЛ</button>
             <button class="btn btn-off" id="id-off-2" onclick="prepareAndSend('22')">ВЫКЛ</button>
@@ -76,30 +89,55 @@
         <div class="status-text" id="sync-time">Синхронізація...</div>
     </div>
 
-    <script>
+        <script>
+        const UI = {
+            status: document.getElementById('dev-status-block'),
+            sync: document.getElementById('sync-time'),
+            on1: document.getElementById('btn-on-1'),
+            off1: document.getElementById('id-off-1'),
+            t1: document.getElementById('time-1'),
+            ind1: document.getElementById('ind-1'),
+            on2: document.getElementById('btn-on-2'),
+            off2: document.getElementById('id-off-2'),
+            t2: document.getElementById('time-2'),
+            ind2: document.getElementById('ind-2')
+        };
+
         let isWaitingForHardware = { "1": false, "2": false };
         let lastTargetState = { "1": null, "2": null };
+        let isShortPulse = { "1": false, "2": false };
         let lastClickTime = 0;
 
-        function prepareAndSend(baseCode, inputId = null) {
+        // Строковые константы замаскированы через hex-коды от багов разметки платформы
+        const CL_LOADING = "\x6c\x6f\x61\x64\x69\x6e\x67"; // "loading"
+        const CL_ACTIVE  = "\x61\x63\x74\x69\x76\x65";   // "active"
+        const CL_OFFLINE = "\x73\x74\x61\x74\x75\x73\x2d\x6f\x66\x66\x6c\x69\x6e\x65"; // "status-offline"
+
+        function prepareAndSend(baseCode, selectId = null) {
             let fullCode = baseCode;
-            // Если передан ID инпута — значит это команда ВКЛ ('11' или '12'), добавляем к ней время
-            if (inputId) {
-                let timeVal = parseInt(document.getElementById(inputId).value, 10);
-                if (isNaN(timeVal) || timeVal < 1) {
-                    timeVal = 1; // Защита на фронтенде: минимум 1 сек
-                    document.getElementById(inputId).value = 1;
+            const relay = baseCode.slice(1, 2);
+            
+            if (selectId) {
+                const selectedVal = document.getElementById(selectId).value;
+                if (selectedVal === "0.5") {
+                    fullCode = baseCode + "*"; 
+                    isShortPulse[relay] = true;
+                } else if (selectedVal === "0") {
+                    fullCode = baseCode; 
+                    isShortPulse[relay] = false;
+                } else {
+                    fullCode = baseCode + ":" + selectedVal; 
+                    isShortPulse[relay] = false;
                 }
-                fullCode = baseCode + ":" + timeVal;
+            } else {
+                isShortPulse[relay] = false;
             }
             sendCmd(fullCode);
         }
 
         function sendCmd(code) {
-            // Парсим чистую команду (берем часть до двоеточия)
-            const basePart = code.split(":")[0];
-            const action = basePart.charAt(0); // '1' - вкл, '2' - выкл
-            const relay = basePart.charAt(1);  // '1' или '2'
+            const action = code.slice(0, 1);
+            const relay = code.slice(1, 2);
             
             lastTargetState[relay] = action === '1' ? '1' : '0';
             isWaitingForHardware[relay] = true;
@@ -110,28 +148,32 @@
             fetch('/cmd?code=' + encodeURIComponent(code))
                 .then(res => {
                     if (!res.ok) {
-                        console.warn('Команда отклонена сервером');
                         isWaitingForHardware[relay] = false;
                         lastTargetState[relay] = null;
+                        isShortPulse[relay] = false;
                         updateUI();
                     }
                 })
                 .catch(err => {
-                    console.error('Помилка мережі:', err);
                     isWaitingForHardware[relay] = false;
                     lastTargetState[relay] = null;
+                    isShortPulse[relay] = false;
                     updateUI();
                 });
         }
 
         function renderButtons(serverData = null) {
-            const statusBlock = document.getElementById('dev-status-block');
-            const online = serverData ? serverData.online : true;
+            let online = false;
+            if (serverData) {
+                online = serverData.online;
+            } else {
+                online = !UI.status.classList.contains(CL_OFFLINE);
+            }
 
             if (online) {
                 if (serverData) {
-                    statusBlock.innerText = "Статус: ОНЛАЙН";
-                    statusBlock.className = "device-status status-online";
+                    UI.status.innerText = "Статус: ОНЛАЙН";
+                    UI.status.className = "device-status status-online";
                 }
 
                 if (Date.now() - lastClickTime > 5000) {
@@ -139,41 +181,58 @@
                     isWaitingForHardware["2"] = false;
                 }
 
-                const realState1 = serverData ? serverData["1"] : "0";
-                const realState2 = serverData ? serverData["2"] : "0";
-
+                let realState1 = "0";
+                let realState2 = "0";
                 if (serverData) {
-                    if (isWaitingForHardware["1"] && realState1 === lastTargetState["1"]) isWaitingForHardware["1"] = false;
-                    if (isWaitingForHardware["2"] && realState2 === lastTargetState["2"]) isWaitingForHardware["2"] = false;
+                    realState1 = serverData["1"] || "0";
+                    realState2 = serverData["2"] || "0";
+                } else {
+                    realState1 = UI.ind1.classList.contains(CL_ACTIVE) ? "1" : "0";
+                    realState2 = UI.ind2.classList.contains(CL_ACTIVE) ? "1" : "0";
                 }
 
-                const lockButtons1 = isWaitingForHardware["1"] || isWaitingForHardware["2"] || realState1 === "1" || realState2 === "1";
-                document.getElementById('btn-on-1').disabled = lockButtons1;
-                document.getElementById('id-off-1').disabled = isWaitingForHardware["1"] || realState1 === "0";
-                document.getElementById('time-1').disabled = lockButtons1;
+                if (serverData) {
+                    if (isWaitingForHardware["1"] && (isShortPulse["1"] || realState1 === lastTargetState["1"])) {
+                        isWaitingForHardware["1"] = false;
+                        isShortPulse["1"] = false;
+                    }
+                    if (isWaitingForHardware["2"] && (isShortPulse["2"] || realState2 === lastTargetState["2"])) {
+                        isWaitingForHardware["2"] = false;
+                        isShortPulse["2"] = false;
+                    }
+                }
 
-                const lockButtons2 = isWaitingForHardware["2"] || isWaitingForHardware["1"] || realState2 === "1" || realState1 === "1";
-                document.getElementById('btn-on-2').disabled = lockButtons2;
-                document.getElementById('id-off-2').disabled = isWaitingForHardware["2"] || realState2 === "0";
-                document.getElementById('time-2').disabled = lockButtons2;
+                const lock1 = isWaitingForHardware["1"] || isWaitingForHardware["2"] || realState1 === "1" || realState2 === "1";
+                UI.on1.disabled = lock1;
+                UI.off1.disabled = isWaitingForHardware["1"] || realState1 === "0";
+                UI.t1.disabled = lock1;
 
-                const ind1 = document.getElementById('ind-1');
-                ind1.className = "indicator"; 
-                if (isWaitingForHardware["1"]) ind1.classList.add('loading'); else if (realState1 === "1") ind1.classList.add('active');
+                const lock2 = isWaitingForHardware["2"] || isWaitingForHardware["1"] || realState2 === "1" || realState1 === "1";
+                UI.on2.disabled = lock2;
+                UI.off2.disabled = isWaitingForHardware["2"] || realState2 === "0";
+                UI.t2.disabled = lock2;
 
-                const ind2 = document.getElementById('ind-2');
-                ind2.className = "indicator"; 
-                if (isWaitingForHardware["2"]) ind2.classList.add('loading'); else if (realState2 === "1") ind2.classList.add('active');
+                UI.ind1.className = "indicator"; 
+                if (isWaitingForHardware["1"]) {
+                    UI.ind1.classList.add(CL_LOADING);
+                } else if (realState1 === "1") {
+                    UI.ind1.classList.add(CL_ACTIVE);
+                }
+
+                UI.ind2.className = "indicator"; 
+                if (isWaitingForHardware["2"]) {
+                    UI.ind2.classList.add(CL_LOADING);
+                } else if (realState2 === "1") {
+                    UI.ind2.classList.add(CL_ACTIVE);
+                }
 
             } else {
-                statusBlock.innerText = "Статус: ОФФЛАЙН";
-                statusBlock.className = "device-status status-offline";
-                document.getElementById('btn-on-1').disabled = true;
-                document.getElementById('id-off-1').disabled = true;
-                document.getElementById('time-1').disabled = true;
-                document.getElementById('btn-on-2').disabled = true;
-                document.getElementById('id-off-2').disabled = true;
-                document.getElementById('time-2').disabled = true;
+                UI.status.innerText = "Статус: ОФФЛАЙН";
+                UI.status.className = "device-status " + CL_OFFLINE;
+                UI.on1.disabled = true; UI.off1.disabled = true; UI.t1.disabled = true;
+                UI.on2.disabled = true; UI.off2.disabled = true; UI.t2.disabled = true;
+                UI.ind1.className = "indicator";
+                UI.ind2.className = "indicator";
             }
         }
 
@@ -182,15 +241,17 @@
                 .then(res => res.json())
                 .then(data => {
                     renderButtons(data);
-                    document.getElementById('sync-time').innerText = "Зв'язок з сервером: ОК";
+                    UI.sync.innerText = "Зв'язок з сервером: ОК";
                 })
                 .catch(err => {
-                    document.getElementById('sync-time').innerText = "Помилка зв'язку з сервером";
+                    renderButtons(null);
+                    UI.sync.innerText = "Помилка зв'язку з сервером";
                 });
         }
 
         setInterval(updateUI, 500);
         updateUI();
     </script>
+
 </body>
 </html>

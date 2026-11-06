@@ -35,12 +35,11 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         if self.path.startswith('/cmd'):
             query = parse_qs(urlparse(self.path).query)
-            code = query.get('code', [None])
+            code_list = query.get('code', [None])
             
-            if code and code[0]:
-                full_code = code[0] # Пример: "11:5" или "21"
-                
-                # Защита от быстрого спама кнопками
+            full_code = code_list.pop(0) if code_list else None
+            
+            if full_code:
                 if current_relay_command != "A":
                     logging.warning("Блокировка: Ожидание ответа на предыдущую команду")
                     self.send_response(400)
@@ -49,20 +48,7 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
                     self.wfile.write("Ошибка: Предыдущая команда еще не обработана".encode('utf-8'))
                     return
 
-                # Разбираем команду на базовую часть и время
-                parts = full_code.split(":")
-                base_cmd = parts[0] # "11" или "21"
-                
-                # Если передано время, валидируем его (минимум 1 секунда)
-                if len(parts) > 1:
-                    try:
-                        seconds = int(parts[1])
-                        if seconds < 1:
-                            seconds = 1
-                        full_code = f"{base_cmd}:{seconds}"
-                    except ValueError:
-                        full_code = base_cmd
-
+                full_code = full_code.strip()
                 current_relay_command = f"A{full_code}"
                 logging.info(f"Сформирована команда для отправки: {current_relay_command}")
                 
@@ -97,7 +83,7 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 with open('index.html', 'r', encoding='utf-8') as f:
                     self.wfile.write(f.read().encode('utf-8'))
             else:
-                self.wfile.write(b"<h1>File index.html not found</h1>")
+                self.wfile.write(b"<h1>index.html not found</h1>")
             return
             
         self.send_response(404)
@@ -120,15 +106,15 @@ class CloudRelayHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 relay_states["1"] = chars.pop(0) if chars else "0"
                 relay_states["2"] = chars.pop(0) if chars else "0"
 
-                # Извлекаем базовую команду для проверки интерлока (убираем двоеточие и время)
-                clean_cmd = current_relay_command.split(":")[0]
+                # Очищаем от спецсимволов и разделяем по двоеточию для интерлока
+                clean_cmd = current_relay_command.replace("*", "").split(":")
+                base_cmd = clean_cmd.pop(0) if clean_cmd else ""
 
-                # Проверка интерлока на бэкенде
-                if clean_cmd == "A11" and relay_states.get("2") == "1":
+                if base_cmd == "A11" and relay_states.get("2") == "1":
                     logging.warning("Блокировка: Сброс команды ВКЛ 1, так как Реле 2 активно")
                     current_relay_command = "A"
                 
-                if clean_cmd == "A12" and relay_states.get("1") == "1":
+                if base_cmd == "A12" and relay_states.get("1") == "1":
                     logging.warning("Блокировка: Сброс команды ВКЛ 2, так как Реле 1 активно")
                     current_relay_command = "A"
 
